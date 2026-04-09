@@ -1,3 +1,4 @@
+0. Created by Electro-Tech
 1. The Power Architecture (Electrical Design)
 Managing multiple voltages is the most critical part of this "Electro-Tech" build.
 
@@ -38,3 +39,6 @@ Activity Ledger: The activityLog is a circular buffer. It records every event (P
 Error Handling: The initTime() function ensures the ESP32 has the correct local time from an NTP server. This is necessary for the logs to show the correct hour and minute of each event.
 
 By following these points, you create a robust, data-informed ecosystem that protects your plants while conserving water resources efficiently.
+
+
+Created by Electro-Tech
