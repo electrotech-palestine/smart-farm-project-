@@ -1,258 +1,40 @@
-#include <DHT.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <HTTPClient.h>
-#include <UniversalTelegramBot.h>
-#include <ArduinoJson.h>
-#include <time.h>
+1. The Power Architecture (Electrical Design)
+Managing multiple voltages is the most critical part of this "Electro-Tech" build.
 
-// --- Basic Configurations ---
-#define WIFI_SSID     "use your own"
-#define WIFI_PASS     "use your own"
-#define BOT_TOKEN     "use your own"
-#define CHAT_ID       "use your own" 
-#define WEATHER_KEY   "use your own"
-#define LATITUDE      "use your own"
-#define LONGITUDE     "use your own"
-#define GROQ_KEY      "use your own"
+The 12V High-Power Rail: This powers the water pump. It must remain isolated from the ESP32 to prevent electrical noise or surges from destroying the microcontroller.
 
-#define DHT_PIN       4
-#define SOIL_PIN      34
-#define RELAY_PIN     26
-#define DHT_TYPE      DHT22
-#define SOIL_DRY      3000
-#define SOIL_WET      1000
-#define SOIL_THRESH   40
-#define AUTO_IRRIGATE_DURATION 60000
-#define MAX_LOG       15
+The 5V/3.3V Logic Rail: The ESP32 runs on 3.3V. The relay module usually requires 5V to trigger the internal coil. Using a common ground (GND) across all power supplies is essential for the signal to travel correctly.
 
-DHT dht(DHT_PIN, DHT_TYPE);
-WiFiClientSecure client;
-WiFiClientSecure groqClient;
-WiFiClientSecure telegramFileClient;
-UniversalTelegramBot bot(BOT_TOKEN, client);
+The Relay Isolation: The relay acts as a "bridge." When the ESP32 sends a signal to Pin 26, the relay closes an internal switch, allowing the 12V current to reach the pump.
 
-unsigned long lastBotCheck      = 0;
-unsigned long lastSensorRead    = 0;
-unsigned long lastAlert         = 0;
-unsigned long lastWeatherCheck  = 0;
-unsigned long irrigationStarted = 0;
-const unsigned long BOT_INTERVAL     = 1000;
-const unsigned long SENSOR_INTERVAL  = 30000;
-const unsigned long ALERT_INTERVAL   = 300000;
-const unsigned long WEATHER_INTERVAL = 3600000;
-bool relayState     = false;
-bool autoIrrigating = false;
-bool rainExpected   = false;
-float rainChance    = 0;
-String weatherDesc  = "";
-float outsideTemp   = 0;
+2. Physical Sensor Integration
+DHT22 (Atmospheric Sensing): Unlike the cheaper DHT11, the DHT22 provides decimal-point accuracy for temperature and humidity. The code uses the DHT.h library to parse the digital signal coming into GPIO 4.
 
-String activityLog[MAX_LOG];
-int logIndex = 0;
-int logCount = 0;
+Capacitive Soil Moisture Sensor: This sensor measures the dielectric constant of the soil. In the code, map() and constrain() functions translate raw analog values (which range from 0 to 4095 on the ESP32) into a user-friendly 0% to 100% scale.
 
-// --- Time and System Functions ---
+Calibration: The SOIL_DRY and SOIL_WET constants are vital. You must test the sensor in a cup of water and in bone-dry soil to set these numbers accurately for your specific sensor.
 
-void initTime() {
-  configTime(7200, 0, "pool.ntp.org", "time.nist.gov");
-  struct tm timeinfo;
-  int attempts = 0;
-  while (!getLocalTime(&timeinfo) && attempts < 20) {
-    delay(500);
-    attempts++;
-  }
-}
+3. Software Logic & Decision Making
+The code is designed to be "Proactive" rather than "Reactive."
 
-String getTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "??:??";
-  char buf[20];
-  strftime(buf, sizeof(buf), "%d/%m %H:%M", &timeinfo);
-  return String(buf);
-}
+The Weather Filter: The fetchWeather() function calls the OpenWeatherMap API using your latitude and longitude. It looks at the pop (Probability of Precipitation). If the chance of rain is high, the system enters a "Protection Mode," refusing to pump water even if the soil is dry, because it knows nature will do the job for free.
 
-void addLog(String action) {
-  String entry = "[" + getTime() + "] " + action;
-  activityLog[logIndex] = entry;
-  logIndex = (logIndex + 1) % MAX_LOG;
-  if (logCount < MAX_LOG) logCount++;
-}
+The Non-Blocking Loop: Notice the use of millis() instead of delay(). This allows the ESP32 to check for Telegram messages every second while simultaneously monitoring sensor data and managing irrigation timers without ever "freezing."
 
-String buildLogMessage() {
-  if (logCount == 0) return "No activity recorded yet.";
-  String msg = "Last " + String(logCount) + " activities:\n--------------------\n";
-  int start = (logCount < MAX_LOG) ? 0 : logIndex;
-  for (int i = 0; i < logCount; i++) {
-    msg += activityLog[(start + i) % MAX_LOG] + "\n";
-  }
-  return msg;
-}
+The Security Layer: The WiFiClientSecure library is used because both Telegram and the Groq AI API require encrypted HTTPS connections. This ensures your control commands cannot be intercepted on your local network.
 
-// --- Fetch Weather Data ---
-void fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/forecast?lat=" + String(LATITUDE) + "&lon=" + String(LONGITUDE) + "&appid=" + String(WEATHER_KEY) + "&units=metric&cnt=8";
-  http.begin(url);
-  if (http.GET() == 200) {
-    DynamicJsonDocument doc(8192);
-    deserializeJson(doc, http.getString());
-    rainExpected = false; rainChance = 0;
-    for (int i = 0; i < 8; i++) {
-      float pop = doc["list"][i]["pop"].as<float>() * 100;
-      if (pop > rainChance) rainChance = pop;
-      String desc = doc["list"][i]["weather"][0]["main"].as<String>();
-      if (desc == "Rain" || desc == "Drizzle" || desc == "Thunderstorm") rainExpected = true;
-    }
-    outsideTemp = doc["list"][0]["main"]["temp"].as<float>();
-    weatherDesc = doc["list"][0]["weather"][0]["description"].as<String>();
-  }
-  http.end();
-}
+4. AI Vision & Telegram Interaction
+This is where the project moves beyond a standard Arduino build into the realm of "Smart Technology."
 
-int getSoilPercent() {
-  return constrain(map(analogRead(SOIL_PIN), SOIL_DRY, SOIL_WET, 0, 100), 0, 100);
-}
+Image Processing: When you send a photo of your plant (e.g., a tomato leaf with spots), the Telegram bot captures the file_path.
 
-// --- Build Status Messages ---
+LLM Integration: The code sends this image URL to the Groq API (Meta-Llama-4-Scout). The AI is prompted to act as an "Expert Botanist." It analyzes the pixels to identify the plant species and suggest if the plant needs more nitrogen, has a fungal infection, or requires a different watering schedule.
 
-String buildStatusMessage() {
-  float temp = dht.readTemperature();
-  float hum  = dht.readHumidity();
-  int   soil = getSoilPercent();
-  
-  String msg = "Farm Status\n";
-  msg += "--------------------\n";
-  msg += "Temperature: " + String(temp, 1) + " C\n";
-  msg += "Air Humidity: " + String(hum, 1) + " %\n";
-  msg += "Soil Moisture: " + String(soil) + "%\n";
-  
-  if (soil < 20) msg += " -> Very Dry!\n";
-  else if (soil < 40) msg += " -> Dry\n";
-  else if (soil < 70) msg += " -> Good\n";
-  else msg += " -> Very Wet\n";
-  
-  msg += "--------------------\n";
-  msg += "Irrigation: " + String(relayState ? "ON" : "OFF") + "\n";
-  msg += "Auto Mode: " + String(autoIrrigating ? "Running" : "Standby") + "\n";
-  msg += "Rain expected: " + String(rainExpected ? "YES" : "NO") + "\n";
-  msg += "Time: " + getTime();
-  
-  return msg;
-}
+Remote Control: The bot acts as a global remote. Whether you are in the next room or another country, you can send /relayon to start the pump or /status to see exactly what the sensors are seeing in real-time.
 
-String buildWeatherMessage() {
-  String msg = "Weather - Nablus\n";
-  msg += "--------------------\n";
-  msg += "Outside Temp: " + String(outsideTemp, 1) + " C\n";
-  msg += "Condition: " + weatherDesc + "\n";
-  msg += "Rain chance: " + String(rainChance, 0) + "%\n\n";
-  
-  if (rainExpected) msg += "Rain expected - Irrigation disabled!";
-  else msg += "No rain - Irrigation enabled!";
-  
-  return msg;
-}
+5. Maintenance and Logging
+Activity Ledger: The activityLog is a circular buffer. It records every event (Pump Start, Rain Alert, Manual Override). This is stored in the ESP32's RAM, providing a history you can call up via the /log command to see if the system has been working correctly while you were away.
 
-// --- Irrigation Control ---
-void setRelay(bool state, String chat_id) {
-  autoIrrigating = false;
-  relayState = state;
-  digitalWrite(RELAY_PIN, state ? HIGH : LOW);
-  addLog(state ? "Manual ON by " + chat_id : "Manual OFF by " + chat_id);
-  bot.sendMessage(chat_id, state ? "Irrigation ON" : "Irrigation OFF", "");
-}
+Error Handling: The initTime() function ensures the ESP32 has the correct local time from an NTP server. This is necessary for the logs to show the correct hour and minute of each event.
 
-void checkAutoAlert() {
-  int soil = getSoilPercent();
-  unsigned long now = millis();
-  if (soil < SOIL_THRESH && !autoIrrigating && (now - lastAlert >= ALERT_INTERVAL)) {
-    lastAlert = now;
-    if (rainExpected) {
-      bot.sendMessage(CHAT_ID, "ALERT: Soil dry! Rain expected - irrigation blocked.", "");
-    } else {
-      relayState = true;
-      autoIrrigating = true;
-      irrigationStarted = now;
-      digitalWrite(RELAY_PIN, HIGH);
-      bot.sendMessage(CHAT_ID, "AUTO: Soil dry! Irrigation ON for 1 min.", "");
-    }
-  }
-}
-
-// --- Image and Message Analysis ---
-void analyzePlantImage(String chat_id, String file_url) {
-  bot.sendMessage(chat_id, "Analyzing plant image...", "");
-  String prompt = "Expert botanist analysis. Be concise.";
-  String reqBody = "{\"model\":\"meta-llama/llama-4-scout-17b-16e-instruct\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"" + file_url + "\"}},{\"type\":\"text\",\"text\":\"" + prompt + "\"}]}],\"max_tokens\":500}";
-
-  HTTPClient httpGroq;
-  httpGroq.begin(groqClient, "https://api.groq.com/openai/v1/chat/completions");
-  httpGroq.addHeader("Content-Type", "application/json");
-  httpGroq.addHeader("Authorization", "Bearer " + String(GROQ_KEY));
-  int groqCode = httpGroq.POST(reqBody);
-
-  if (groqCode == 200) {
-    DynamicJsonDocument resDoc(8192);
-    deserializeJson(resDoc, httpGroq.getString());
-    String aiResponse = resDoc["choices"][0]["message"]["content"].as<String>();
-    bot.sendMessage(chat_id, "Plant Diagnosis:\n" + aiResponse, "");
-  }
-  httpGroq.end();
-}
-
-void checkTelegramMessages() {
-  int msgCount = bot.getUpdates(bot.last_message_received + 1);
-  while (msgCount) {
-    for (int i = 0; i < msgCount; i++) {
-      String chat_id  = bot.messages[i].chat_id;
-      String text     = bot.messages[i].text;
-
-      if (bot.messages[i].hasDocument || bot.messages[i].type == "photo") {
-        analyzePlantImage(chat_id, bot.messages[i].file_path);
-      }
-      else if (text == "/start" || text == "/help") {
-        bot.sendMessage(chat_id, "Welcome! Commands:\n/status\n/weather\n/relayon\n/relayoff\n/log", "");
-      }
-      else if (text == "/status")   bot.sendMessage(chat_id, buildStatusMessage(), "");
-      else if (text == "/weather")  bot.sendMessage(chat_id, buildWeatherMessage(), "");
-      else if (text == "/relayon")  setRelay(true, chat_id);
-      else if (text == "/relayoff") setRelay(false, chat_id);
-      else if (text == "/log")      bot.sendMessage(chat_id, buildLogMessage(), "");
-    }
-    msgCount = bot.getUpdates(bot.last_message_received + 1);
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  dht.begin();
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
-
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); }
-  
-  client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
-  groqClient.setInsecure();
-  telegramFileClient.setInsecure();
-
-  initTime();
-  fetchWeather();
-  bot.sendMessage(CHAT_ID, "Smart Farm Online!", "");
-}
-
-void loop() {
-  unsigned long now = millis();
-  if (now - lastBotCheck     >= BOT_INTERVAL)     { lastBotCheck = now;     checkTelegramMessages(); }
-  if (now - lastSensorRead   >= SENSOR_INTERVAL)  { lastSensorRead = now;   checkAutoAlert(); }
-  if (now - lastWeatherCheck >= WEATHER_INTERVAL) { lastWeatherCheck = now; fetchWeather(); }
-
-  if (autoIrrigating && (now - irrigationStarted >= AUTO_IRRIGATE_DURATION)) {
-    autoIrrigating = false;
-    relayState = false;
-    digitalWrite(RELAY_PIN, LOW);
-    bot.sendMessage(CHAT_ID, "AUTO: Irrigation finished.", "");
-  }
-}
+By following these points, you create a robust, data-informed ecosystem that protects your plants while conserving water resources efficiently.
