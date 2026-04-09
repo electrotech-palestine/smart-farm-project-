@@ -1,4 +1,3 @@
-0. Created by Electro-Tech
 1. The Power Architecture (Electrical Design)
 Managing multiple voltages is the most critical part of this "Electro-Tech" build.
 
@@ -41,4 +40,3 @@ Error Handling: The initTime() function ensures the ESP32 has the correct local 
 By following these points, you create a robust, data-informed ecosystem that protects your plants while conserving water resources efficiently.
 
 
-Created by Electro-Tech
