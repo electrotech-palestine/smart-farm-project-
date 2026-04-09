@@ -6,15 +6,15 @@
 #include <ArduinoJson.h>
 #include <time.h>
 
-// --- الإعدادات الأساسية ---
-#define WIFI_SSID     "use your own "
-#define WIFI_PASS     "use your own "
-#define BOT_TOKEN     "use your own :"
-#define CHAT_ID       "use your own " 
-#define WEATHER_KEY   "use your own "
-#define LATITUDE      "use your own "
-#define LONGITUDE     "use your own "
-#define GROQ_KEY      "use your own "
+// --- Basic Configurations ---
+#define WIFI_SSID     "use your own"
+#define WIFI_PASS     "use your own"
+#define BOT_TOKEN     "use your own"
+#define CHAT_ID       "use your own" 
+#define WEATHER_KEY   "use your own"
+#define LATITUDE      "use your own"
+#define LONGITUDE     "use your own"
+#define GROQ_KEY      "use your own"
 
 #define DHT_PIN       4
 #define SOIL_PIN      34
@@ -52,7 +52,7 @@ String activityLog[MAX_LOG];
 int logIndex = 0;
 int logCount = 0;
 
-// --- وظائف الوقت والنظام ---
+// --- Time and System Functions ---
 
 void initTime() {
   configTime(7200, 0, "pool.ntp.org", "time.nist.gov");
@@ -89,7 +89,7 @@ String buildLogMessage() {
   return msg;
 }
 
-// --- جلب الطقس ---
+// --- Fetch Weather Data ---
 void fetchWeather() {
   if (WiFi.status() != WL_CONNECTED) return;
   HTTPClient http;
@@ -115,7 +115,7 @@ int getSoilPercent() {
   return constrain(map(analogRead(SOIL_PIN), SOIL_DRY, SOIL_WET, 0, 100), 0, 100);
 }
 
-// --- بناء الرسائل كما في الصورة [cite: 40, 41, 42, 43, 48, 51, 52, 53] ---
+// --- Build Status Messages ---
 
 String buildStatusMessage() {
   float temp = dht.readTemperature();
@@ -155,7 +155,7 @@ String buildWeatherMessage() {
   return msg;
 }
 
-// --- التحكم بالري ---
+// --- Irrigation Control ---
 void setRelay(bool state, String chat_id) {
   autoIrrigating = false;
   relayState = state;
@@ -181,7 +181,7 @@ void checkAutoAlert() {
   }
 }
 
-// --- تحليل الصور والرسائل ---
+// --- Image and Message Analysis ---
 void analyzePlantImage(String chat_id, String file_url) {
   bot.sendMessage(chat_id, "Analyzing plant image...", "");
   String prompt = "Expert botanist analysis. Be concise.";
